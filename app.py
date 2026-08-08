@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.runnables import RunnableLambda
+from pydantic import BaseModel, Field
 
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
@@ -42,11 +43,13 @@ tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluato
 llm = ChatGoogleGenerativeAI(model="gemini-flash", temperature=0)
 agent = create_react_agent(llm, tools)
 
-# 3. Format input/output for LangServe
-def invoke_agent(input_dict: dict) -> str:
-    # Run the ReAct agent graph
-    result = agent.invoke(input_dict)
-    # Extract the final message content
+# 3. Define Input Schema for LangServe UI
+class AgentInput(BaseModel):
+    input: str = Field(..., description="User query for the AI Agent")
+
+def invoke_agent(data: AgentInput) -> str:
+    query = data.input if isinstance(data, AgentInput) else data.get("input", "")
+    result = agent.invoke({"messages": [("user", query)]})
     messages = result.get("messages", [])
     if messages:
         return messages[-1].content
@@ -61,7 +64,7 @@ app = FastAPI(
     description="Placement assistance agent built with LangChain & LangServe"
 )
 
-add_routes(app, agent_chain, path="/agent")
+add_routes(app, agent_chain, path="/agent", input_type=AgentInput)
 
 if __name__ == "__main__":
     import uvicorn
