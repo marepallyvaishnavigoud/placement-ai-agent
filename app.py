@@ -8,7 +8,7 @@ from langgraph.prebuilt import create_react_agent
 from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel, Field
 
-# 1. Environment Configuration
+# 1. Environment Setup
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
 # 2. Define Tools
@@ -40,45 +40,49 @@ def github_evaluator(username: str) -> str:
 tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluator]
 
 # 3. Model & ReAct Agent Setup
-# Updated to valid model name: gemini-1.5-flash
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 agent = create_react_agent(llm, tools)
 
-# 4. Pydantic Schemas for LangServe UI Playground
-class AgentInput(BaseModel):
-    input: str = Field(..., description="User query for the Placement AI Agent")
+# 4. Pydantic Input/Output Schemas
+class InputSchema(BaseModel):
+    input: str = Field(..., description="Query for the Placement AI Agent")
 
-class AgentOutput(BaseModel):
-    output: str = Field(..., description="Agent response output")
+class OutputSchema(BaseModel):
+    output: str = Field(..., description="Final text output from the agent")
 
-# 5. Invocation Wrapper
-def invoke_agent(data: AgentInput) -> dict:
-    query = data.input if isinstance(data, AgentInput) else data.get("input", "")
+# 5. Extraction Logic
+def parse_agent_response(data: dict) -> dict:
+    user_query = data.get("input", "")
     
-    # Run the agent execution loop
-    result = agent.invoke({"messages": [{"role": "user", "content": query}]})
+    # Invoke LangGraph agent with state
+    state = agent.invoke({"messages": [{"role": "user", "content": user_query}]})
     
-    # Parse final content from messages
-    messages = result.get("messages", [])
-    response_text = messages[-1].content if messages else "No response generated."
-    
-    return {"output": response_text}
+    # Extract the last AIMessage content string
+    messages = state.get("messages", [])
+    if messages and hasattr(messages[-1], "content"):
+        final_text = str(messages[-1].content)
+    else:
+        final_text = "No response generated."
+        
+    return {"output": final_text}
 
-agent_chain = RunnableLambda(invoke_agent)
+# Build Runnable Chain with explicit types
+agent_chain = RunnableLambda(parse_agent_response).with_types(
+    input_type=InputSchema,
+    output_type=OutputSchema
+)
 
-# 6. FastAPI App & LangServe Routes
+# 6. FastAPI App Setup
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
-    description="Placement assistance agent built with LangChain, LangGraph, and LangServe"
+    description="Placement assistance agent"
 )
 
 add_routes(
     app,
     agent_chain,
-    path="/agent",
-    input_type=AgentInput,
-    output_type=AgentOutput
+    path="/agent"
 )
 
 if __name__ == "__main__":
