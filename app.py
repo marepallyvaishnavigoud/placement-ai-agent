@@ -9,6 +9,7 @@ from langgraph.prebuilt import create_react_agent
 from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel, Field
 
+# Set API key
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
 # 1. Define Tools
@@ -39,17 +40,22 @@ def github_evaluator(username: str) -> str:
 
 tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluator]
 
-# 2. ReAct Agent Setup
+# 2. ReAct Agent
 llm = ChatGoogleGenerativeAI(model="gemini-flash", temperature=0)
 agent = create_react_agent(llm, tools)
 
-# 3. Define Input Schema for LangServe UI
+# 3. Pydantic Input Schema
 class AgentInput(BaseModel):
-    input: str = Field(..., description="User query for the AI Agent")
+    input: str = Field(..., description="User query")
 
-def invoke_agent(data: AgentInput) -> str:
-    query = data.input if isinstance(data, AgentInput) else data.get("input", "")
-    result = agent.invoke({"messages": [("user", query)]})
+# 4. Agent Invocation Chain
+def invoke_agent(data: dict) -> str:
+    query = data.get("input", "") if isinstance(data, dict) else str(data)
+    
+    # Run the ReAct agent
+    result = agent.invoke({"messages": [{"role": "user", "content": query}]})
+    
+    # Extract messages list from state
     messages = result.get("messages", [])
     if messages:
         return messages[-1].content
@@ -57,11 +63,11 @@ def invoke_agent(data: AgentInput) -> str:
 
 agent_chain = RunnableLambda(invoke_agent)
 
-# 4. FastAPI & LangServe Route
+# 5. FastAPI App
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
-    description="Placement assistance agent built with LangChain & LangServe"
+    description="Placement assistance agent"
 )
 
 add_routes(app, agent_chain, path="/agent", input_type=AgentInput)
