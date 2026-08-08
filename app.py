@@ -6,6 +6,7 @@ from langserve import add_routes
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
+from langchain_core.runnables import RunnableLambda
 
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
@@ -13,7 +14,7 @@ os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 @tool
 def job_search(role: str) -> str:
     """Searches for recent campus or entry-level job roles and required skills."""
-    return f"Found 3 openings for {role}: 1. SDE-1 (Requires Python, DSA, SQL). 2. AI Engineer (Requires PyTorch, LangChain, FastAPI)."
+    return f"Found openings for {role}: 1. SDE-1 (Requires Python, DSA, SQL). 2. AI Engineer (Requires PyTorch, LangChain, FastAPI)."
 
 @tool
 def skill_gap_analysis(resume_text: str, target_role: str) -> str:
@@ -32,26 +33,35 @@ def github_evaluator(username: str) -> str:
     if res.status_code == 200:
         repos = res.json()
         repo_names = [r['name'] for r in repos[:5]]
-        return f"GitHub User '{username}' repos: {', '.join(repo_names)}."
+        return f"GitHub User '{username}' public repos: {', '.join(repo_names)}."
     return f"Could not fetch profile for {username}."
 
 tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluator]
 
-# 2. Model & ReAct Agent Setup
+# 2. ReAct Agent Setup
 llm = ChatGoogleGenerativeAI(model="gemini-flash", temperature=0)
+agent = create_react_agent(llm, tools)
 
-# create_react_agent automatically handles tool calling, loop execution, and Pydantic schemas for LangServe
-agent_executor = create_react_agent(llm, tools)
+# 3. Format input/output for LangServe
+def invoke_agent(input_dict: dict) -> str:
+    # Run the ReAct agent graph
+    result = agent.invoke(input_dict)
+    # Extract the final message content
+    messages = result.get("messages", [])
+    if messages:
+        return messages[-1].content
+    return "No response generated."
 
-# 3. FastAPI App
+agent_chain = RunnableLambda(invoke_agent)
+
+# 4. FastAPI & LangServe Route
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
-    description="Placement assistance agent built with LangChain, LangGraph, and LangServe"
+    description="Placement assistance agent built with LangChain & LangServe"
 )
 
-# Expose ReAct Agent endpoint
-add_routes(app, agent_executor, path="/agent")
+add_routes(app, agent_chain, path="/agent")
 
 if __name__ == "__main__":
     import uvicorn
