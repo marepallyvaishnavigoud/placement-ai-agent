@@ -1,4 +1,3 @@
-
 import os
 import requests
 from fastapi import FastAPI
@@ -9,10 +8,10 @@ from langgraph.prebuilt import create_react_agent
 from langchain_core.runnables import RunnableLambda
 from pydantic import BaseModel, Field
 
-# Set API key
+# 1. Environment Configuration
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
-# 1. Define Tools
+# 2. Define Tools
 @tool
 def job_search(role: str) -> str:
     """Searches for recent campus or entry-level job roles and required skills."""
@@ -40,37 +39,47 @@ def github_evaluator(username: str) -> str:
 
 tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluator]
 
-# 2. ReAct Agent
-llm = ChatGoogleGenerativeAI(model="gemini-flash", temperature=0)
+# 3. Model & ReAct Agent Setup
+# Updated to valid model name: gemini-1.5-flash
+llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 agent = create_react_agent(llm, tools)
 
-# 3. Pydantic Input Schema
+# 4. Pydantic Schemas for LangServe UI Playground
 class AgentInput(BaseModel):
-    input: str = Field(..., description="User query")
+    input: str = Field(..., description="User query for the Placement AI Agent")
 
-# 4. Agent Invocation Chain
-def invoke_agent(data: dict) -> str:
-    query = data.get("input", "") if isinstance(data, dict) else str(data)
+class AgentOutput(BaseModel):
+    output: str = Field(..., description="Agent response output")
+
+# 5. Invocation Wrapper
+def invoke_agent(data: AgentInput) -> dict:
+    query = data.input if isinstance(data, AgentInput) else data.get("input", "")
     
-    # Run the ReAct agent
+    # Run the agent execution loop
     result = agent.invoke({"messages": [{"role": "user", "content": query}]})
     
-    # Extract messages list from state
+    # Parse final content from messages
     messages = result.get("messages", [])
-    if messages:
-        return messages[-1].content
-    return "No response generated."
+    response_text = messages[-1].content if messages else "No response generated."
+    
+    return {"output": response_text}
 
 agent_chain = RunnableLambda(invoke_agent)
 
-# 5. FastAPI App
+# 6. FastAPI App & LangServe Routes
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
-    description="Placement assistance agent"
+    description="Placement assistance agent built with LangChain, LangGraph, and LangServe"
 )
 
-add_routes(app, agent_chain, path="/agent", input_type=AgentInput)
+add_routes(
+    app,
+    agent_chain,
+    path="/agent",
+    input_type=AgentInput,
+    output_type=AgentOutput
+)
 
 if __name__ == "__main__":
     import uvicorn
