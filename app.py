@@ -4,10 +4,12 @@ from fastapi import FastAPI
 from langserve import add_routes
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.runnables import RunnableLambda
 
+# Set API key from environment variable
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
-# Define Tools
+# 1. Define Tools
 @tool
 def job_search(role: str) -> str:
     """Searches for recent campus or entry-level job roles and required skills."""
@@ -33,20 +35,55 @@ def github_evaluator(username: str) -> str:
         return f"GitHub User '{username}' repos: {', '.join(repo_names)}."
     return f"Could not fetch profile for {username}."
 
-tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluator]
+# Mapping of available tools
+tools_by_name = {
+    "job_search": job_search,
+    "skill_gap_analysis": skill_gap_analysis,
+    "project_recommendation": project_recommendation,
+    "github_evaluator": github_evaluator
+}
 
-# App Setup
+tools = list(tools_by_name.values())
+
+# 2. Model Setup
 llm = ChatGoogleGenerativeAI(model="gemini-flash", temperature=0)
 llm_with_tools = llm.bind_tools(tools)
 
+# 3. Runnable Chain to execute tool calls automatically
+def run_agent(input_data):
+    messages = input_data.get("messages", [])
+    # First LLM call
+    ai_msg = llm_with_tools.invoke(messages)
+    messages.append(ai_msg)
+    
+    # Check if LLM requested tool execution
+    if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+        for tool_call in ai_msg.tool_calls:
+            selected_tool = tools_by_name.get(tool_call["name"].lower())
+            if selected_tool:
+                tool_output = selected_tool.invoke(tool_call["args"])
+                # Append tool execution result back to messages
+                messages.append({
+                    "role": "tool",
+                    "content": str(tool_output),
+                    "tool_call_id": tool_call["id"]
+                })
+        # Final response synthesis
+        final_response = llm.invoke(messages)
+        return final_response.content
+    
+    return ai_msg.content
+
+agent_chain = RunnableLambda(run_agent)
+
+# 4. FastAPI & LangServe Route
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
     description="Placement assistance agent built with LangChain and LangServe"
 )
 
-# Expose endpoint via LangServe
-add_routes(app, llm_with_tools, path="/agent")
+add_routes(app, agent_chain, path="/agent")
 
 if __name__ == "__main__":
     import uvicorn
