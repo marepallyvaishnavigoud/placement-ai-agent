@@ -1,10 +1,11 @@
+# 2. Create requirements.txt
+
 fastapi
 uvicorn
 langchain
 langchain-community
 langchain-core
 langchain-google-genai
-langgraph
 langserve[all]
 requests
 pydantic
