@@ -5,10 +5,10 @@ from langserve import add_routes
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableLambda
+from pydantic import BaseModel, Field
 
-# 1. Environment Setup
+# 1. Environment Configuration
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
 # 2. Define Tools
@@ -43,29 +43,33 @@ tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluato
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 agent = create_react_agent(llm, tools)
 
-# 4. Agent Execution Function
-def run_agent_and_extract_string(query_str: str) -> str:
-    if isinstance(query_str, dict):
-        query_str = query_str.get("input", str(query_str))
+# 4. Pydantic Input Schema for LangServe UI
+class AgentInput(BaseModel):
+    input: str = Field(..., description="User query for the Placement AI Agent")
+
+# 5. Streaming Agent Execution Function
+def run_agent_stream(data: dict):
+    user_query = data.get("input", "") if isinstance(data, dict) else str(data)
     
-    # Run the ReAct agent graph
-    result = agent.invoke({"messages": [{"role": "user", "content": str(query_str)}]})
+    # Run agent with empty callbacks to isolate inner traces from LangServe UI
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": user_query}]},
+        config={"callbacks": []}
+    )
     
-    # Extract final text message
+    # Extract final text output
     messages = result.get("messages", [])
     if messages and hasattr(messages[-1], "content"):
-        return str(messages[-1].content)
-    return "No response generated."
+        final_text = str(messages[-1].content)
+    else:
+        final_text = "No response generated."
+        
+    # Stream final string directly to the Playground Output box
+    yield final_text
 
-# 5. LCEL Pipeline Construction
-prompt = ChatPromptTemplate.from_messages([
-    ("user", "{input}")
-])
+agent_chain = RunnableLambda(run_agent_stream).with_types(input_type=AgentInput)
 
-# Converting input dictionary directly into string output for LangServe UI
-chain = prompt | RunnableLambda(lambda x: run_agent_and_extract_string(x.to_string()))
-
-# 6. FastAPI App Setup
+# 6. FastAPI App & Routes
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
@@ -74,7 +78,7 @@ app = FastAPI(
 
 add_routes(
     app,
-    chain,
+    agent_chain,
     path="/agent"
 )
 
