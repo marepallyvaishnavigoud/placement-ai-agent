@@ -5,10 +5,11 @@ from langserve import add_routes
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
-from langchain_core.runnables import RunnableLambda
+from langchain_core.runnables import Runnable
+from langchain_core.runnables.config import RunnableConfig
 from pydantic import BaseModel, Field
 
-# 1. Environment Configuration
+# 1. Environment Setup
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
 # 2. Define Tools
@@ -39,37 +40,34 @@ def github_evaluator(username: str) -> str:
 
 tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluator]
 
-# 3. Model & ReAct Agent Setup
+# 3. Model & Agent Setup
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 agent = create_react_agent(llm, tools)
 
-# 4. Pydantic Input Schema for LangServe UI
+# 4. Input & Output Schemas for LangServe
 class AgentInput(BaseModel):
-    input: str = Field(..., description="User query for the Placement AI Agent")
+    input: str = Field(..., description="User query for the agent")
 
-# 5. Streaming Agent Execution Function
-def run_agent_stream(data: dict):
-    user_query = data.get("input", "") if isinstance(data, dict) else str(data)
-    
-    # Run agent with empty callbacks to isolate inner traces from LangServe UI
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": user_query}]},
-        config={"callbacks": []}
-    )
-    
-    # Extract final text output
-    messages = result.get("messages", [])
-    if messages and hasattr(messages[-1], "content"):
-        final_text = str(messages[-1].content)
-    else:
-        final_text = "No response generated."
-        
-    # Stream final string directly to the Playground Output box
-    yield final_text
+class AgentOutput(BaseModel):
+    output: str = Field(..., description="Final text output")
 
-agent_chain = RunnableLambda(run_agent_stream).with_types(input_type=AgentInput)
+# 5. Robust Runnable Wrapper
+class AgentRunner(Runnable[AgentInput, AgentOutput]):
+    def invoke(self, input: AgentInput, config: RunnableConfig | None = None) -> AgentOutput:
+        query = input.input if isinstance(input, AgentInput) else str(input)
+        res = agent.invoke({"messages": [{"role": "user", "content": query}]})
+        messages = res.get("messages", [])
+        text = str(messages[-1].content) if messages and hasattr(messages[-1], "content") else "No response."
+        return AgentOutput(output=text)
 
-# 6. FastAPI App & Routes
+    async def ainvoke(self, input: AgentInput, config: RunnableConfig | None = None) -> AgentOutput:
+        query = input.input if isinstance(input, AgentInput) else str(input)
+        res = await agent.ainvoke({"messages": [{"role": "user", "content": query}]})
+        messages = res.get("messages", [])
+        text = str(messages[-1].content) if messages and hasattr(messages[-1], "content") else "No response."
+        return AgentOutput(output=text)
+
+# 6. FastAPI Setup
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
@@ -78,7 +76,7 @@ app = FastAPI(
 
 add_routes(
     app,
-    agent_chain,
+    AgentRunner(),
     path="/agent"
 )
 
