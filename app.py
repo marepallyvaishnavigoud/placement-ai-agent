@@ -1,21 +1,18 @@
+%%writefile app.py
 import os
 import requests
 from fastapi import FastAPI
 from langserve import add_routes
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.prebuilt import create_react_agent
-from langchain_core.runnables import RunnableLambda
-from pydantic import BaseModel, Field
 
-# 1. Environment Setup
 os.environ["GOOGLE_API_KEY"] = os.getenv("GOOGLE_API_KEY", "")
 
-# 2. Define Tools
+# Define Tools
 @tool
 def job_search(role: str) -> str:
     """Searches for recent campus or entry-level job roles and required skills."""
-    return f"Found openings for {role}: 1. SDE-1 (Requires Python, DSA, SQL). 2. AI Engineer (Requires PyTorch, LangChain, FastAPI)."
+    return f"Found 3 openings for {role}: 1. SDE-1 (Requires Python, DSA, SQL). 2. AI Engineer (Requires PyTorch, LangChain, FastAPI)."
 
 @tool
 def skill_gap_analysis(resume_text: str, target_role: str) -> str:
@@ -34,56 +31,23 @@ def github_evaluator(username: str) -> str:
     if res.status_code == 200:
         repos = res.json()
         repo_names = [r['name'] for r in repos[:5]]
-        return f"GitHub User '{username}' public repos: {', '.join(repo_names)}."
+        return f"GitHub User '{username}' repos: {', '.join(repo_names)}."
     return f"Could not fetch profile for {username}."
 
 tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluator]
 
-# 3. Model & ReAct Agent Setup
-llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
-agent = create_react_agent(llm, tools)
+# App Setup
+llm = ChatGoogleGenerativeAI(model="gemini-flash", temperature=0)
+llm_with_tools = llm.bind_tools(tools)
 
-# 4. Pydantic Input/Output Schemas
-class InputSchema(BaseModel):
-    input: str = Field(..., description="Query for the Placement AI Agent")
-
-class OutputSchema(BaseModel):
-    output: str = Field(..., description="Final text output from the agent")
-
-# 5. Extraction Logic
-def parse_agent_response(data: dict) -> dict:
-    user_query = data.get("input", "")
-    
-    # Invoke LangGraph agent with state
-    state = agent.invoke({"messages": [{"role": "user", "content": user_query}]})
-    
-    # Extract the last AIMessage content string
-    messages = state.get("messages", [])
-    if messages and hasattr(messages[-1], "content"):
-        final_text = str(messages[-1].content)
-    else:
-        final_text = "No response generated."
-        
-    return {"output": final_text}
-
-# Build Runnable Chain with explicit types
-agent_chain = RunnableLambda(parse_agent_response).with_types(
-    input_type=InputSchema,
-    output_type=OutputSchema
-)
-
-# 6. FastAPI App Setup
 app = FastAPI(
     title="Placement-Ready AI Agent",
     version="1.0",
-    description="Placement assistance agent"
+    description="Placement assistance agent built with LangChain and LangServe"
 )
 
-add_routes(
-    app,
-    agent_chain,
-    path="/agent"
-)
+# Expose endpoint via LangServe
+add_routes(app, llm_with_tools, path="/agent")
 
 if __name__ == "__main__":
     import uvicorn
