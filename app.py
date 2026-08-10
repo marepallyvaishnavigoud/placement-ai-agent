@@ -44,14 +44,14 @@ tools = [job_search, skill_gap_analysis, project_recommendation, github_evaluato
 llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
 agent = create_react_agent(llm, tools)
 
-# 4. Input & Output Schemas for LangServe
+# 4. Input & Output Schemas
 class AgentInput(BaseModel):
     input: str = Field(..., description="User query for the agent")
 
 class AgentOutput(BaseModel):
     output: str = Field(..., description="Final text output")
 
-# 5. Custom Runnable to handle Sync/Async Execution for ASGI
+# 5. Runnable Execution Wrapper
 class AgentRunner(Runnable[AgentInput, AgentOutput]):
     def invoke(self, input: AgentInput, config: RunnableConfig | None = None) -> AgentOutput:
         query = input.input if isinstance(input, AgentInput) else str(input)
