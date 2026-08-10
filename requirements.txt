@@ -1,8 +1,9 @@
-streamlit>=1.30.0
-langchain>=0.2.0,<0.3.0
-langchain-community>=0.2.0,<0.3.0
-langchain-google-genai>=2.0.0
-pypdf>=4.0.0
-requests>=2.31.0
-duckduckgo-search>=5.0.0
-python-dotenv>=1.0.0
+fastapi
+uvicorn
+langserve[all]
+langchain
+langchain-core
+langchain-google-genai
+langgraph
+pydantic
+requests
