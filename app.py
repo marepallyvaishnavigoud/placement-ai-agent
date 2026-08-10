@@ -3,7 +3,16 @@ import requests
 import streamlit as st
 from pypdf import PdfReader
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
+# Safe imports across different LangChain package versions
+try:
+    from langchain.agents import AgentExecutor, create_tool_calling_agent
+except ImportError:
+    try:
+        from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
+    except ImportError:
+        from langchain.agents.agent_executor import AgentExecutor
+        from langchain.agents import create_tool_calling_agent
+
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -18,8 +27,16 @@ st.markdown("Upload your resume, target role, and GitHub ID to generate a full r
 # Sidebar for API Keys
 with st.sidebar:
     st.header("🔑 API Credentials")
-    google_api_key = st.text_input("Google API Key", type="password", value=os.getenv("GOOGLE_API_KEY", ""))
-    github_token = st.text_input("GitHub Personal Access Token (Optional)", type="password", value=os.getenv("GITHUB_TOKEN", ""))
+    google_api_key = st.text_input(
+        "Google API Key", 
+        type="password", 
+        value=os.getenv("GOOGLE_API_KEY", "")
+    )
+    github_token = st.text_input(
+        "GitHub Personal Access Token (Optional)", 
+        type="password", 
+        value=os.getenv("GITHUB_TOKEN", "")
+    )
 
 # --- TOOL DEFINITIONS ---
 
@@ -89,8 +106,10 @@ def extract_pdf_text(uploaded_file):
     return text
 
 if st.button("🚀 Analyze Career Readiness"):
-    if not google_api_key:
-        st.error("Please enter your Google API Key in the sidebar or set GOOGLE_API_KEY in environment variables.")
+    api_key = google_api_key or os.getenv("GOOGLE_API_KEY")
+    
+    if not api_key:
+        st.error("Please enter your Google API Key in the sidebar or set GOOGLE_API_KEY in Render environment variables.")
     elif not target_role:
         st.error("Please enter a target job role.")
     elif not uploaded_file:
@@ -102,7 +121,8 @@ if st.button("🚀 Analyze Career Readiness"):
         # Initialize Google Gemini LLM Core
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
-            google_api_key=google_api_key
+            google_api_key=api_key,
+            temperature=0.2
         )
 
         prompt = ChatPromptTemplate.from_messages([
@@ -139,7 +159,7 @@ Follow this workflow:
                 response = agent_executor.invoke({
                     "target_role": target_role,
                     "github_id": github_id,
-                    "resume_text": resume_text[:3000] # Truncated to fit context window safely
+                    "resume_text": resume_text[:3000] # Truncated to stay safely in context window
                 })
 
                 st.success("Analysis Complete!")
